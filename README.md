@@ -82,3 +82,4 @@ Any business scoring **at or below `maxScore`** (default 4) is exported as a lea
 - "Stock template look" and "inconsistent fonts/colors" can't be reliably detected from HTML. The proxy signals (no responsive design, table layouts, no HTML5) catch most of them. For visual review, add a Playwright screenshot pass on the worst-scoring sites.
 - Site builder detection (Wix/Squarespace/etc.) is informational only — a Wix site can still be high-quality, so it doesn't dock points. Filter on `detectedBuilder` in the CSV separately if needed.
 # leads-finder
+# leads-finder
