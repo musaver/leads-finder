@@ -1,0 +1,175 @@
+// Website quality analyzer.
+// Scores a URL 0..9 against the low-quality criteria. Higher = better.
+
+import * as cheerio from "cheerio";
+
+const USER_AGENT =
+  "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
+  "AppleWebKit/537.36 (KHTML, like Gecko) " +
+  "Chrome/124.0.0.0 Safari/537.36";
+
+const SITE_BUILDERS: Record<string, string> = {
+  "wix.com": "Wix",
+  "squarespace": "Squarespace",
+  "godaddy": "GoDaddy",
+  "weebly": "Weebly",
+  "sitebuilder": "Sitebuilder",
+  "duda": "Duda",
+  "shopify": "Shopify",
+  "wordpress": "WordPress",
+  "webflow": "Webflow",
+};
+
+const CTA_KEYWORDS = [
+  "book now", "book online", "order now", "order online",
+  "call now", "schedule", "reserve", "buy now", "get a quote",
+  "request a quote", "contact us", "request appointment",
+  "make appointment", "get started",
+];
+
+const BOOK_OR_ORDER_KEYWORDS = [
+  "book now", "book online", "order now", "order online", "reserve online",
+];
+
+const PRICING_KEYWORDS = [
+  "pricing", "our prices", "rates", "menu", "$ ",
+  "starting at", "from $",
+];
+
+const MODERN_CSS = [
+  "bootstrap", "tailwind", "foundation", "bulma", "material", "chakra",
+];
+
+export interface SiteAnalysis {
+  siteStatus: "ok" | "fetch_failed";
+  qualityScore: number;
+  qualityReasons: string;
+  detectedBuilder: string;
+  hasResponsiveViewport: boolean;
+  html5Doctype: boolean;
+  usesModernLayout: boolean;
+  modernCssFramework: boolean;
+  hasClearCta: boolean;
+  hasBookOrOrder: boolean;
+  hasWhatsapp: boolean;
+  hasForm: boolean;
+  hasPricingOrServices: boolean;
+}
+
+function emptyAnalysis(): SiteAnalysis {
+  return {
+    siteStatus: "fetch_failed",
+    qualityScore: 0,
+    qualityReasons: "",
+    detectedBuilder: "",
+    hasResponsiveViewport: false,
+    html5Doctype: false,
+    usesModernLayout: false,
+    modernCssFramework: false,
+    hasClearCta: false,
+    hasBookOrOrder: false,
+    hasWhatsapp: false,
+    hasForm: false,
+    hasPricingOrServices: false,
+  };
+}
+
+async function fetchHtml(url: string, timeoutMs = 12000): Promise<string | null> {
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const resp = await fetch(url, {
+      headers: { "User-Agent": USER_AGENT, "Accept": "text/html" },
+      redirect: "follow",
+      signal: controller.signal,
+    });
+    if (!resp.ok) return null;
+    const ctype = resp.headers.get("content-type") ?? "";
+    if (!ctype.toLowerCase().includes("html")) return null;
+    return await resp.text();
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+export async function analyzeWebsite(url: string): Promise<SiteAnalysis> {
+  const result = emptyAnalysis();
+  const html = await fetchHtml(url);
+  if (!html) {
+    result.qualityReasons = "could_not_fetch_site";
+    return result;
+  }
+
+  result.siteStatus = "ok";
+  const $ = cheerio.load(html);
+  const htmlLower = html.toLowerCase();
+  const textLower = $.root().text().toLowerCase();
+
+  // 1. Responsive viewport
+  result.hasResponsiveViewport = $('meta[name="viewport"]').length > 0;
+
+  // 2. HTML5 doctype
+  result.html5Doctype = /<!doctype\s+html\s*>/i.test(html);
+
+  // 3. Modern layout: not heavily table-based, has semantic tags
+  const topLevelTables = $("table").filter(
+    (_, el) => $(el).parents("table").length === 0,
+  ).length;
+  const semanticTags = $("header, main, nav, section, article, footer").length;
+  result.usesModernLayout = topLevelTables <= 1 && semanticTags >= 2;
+
+  // 4. Modern CSS framework signature
+  result.modernCssFramework = MODERN_CSS.some((fw) => htmlLower.includes(fw));
+
+  // 5. Clear CTA anywhere on page
+  result.hasClearCta = CTA_KEYWORDS.some((kw) => textLower.includes(kw));
+
+  // 6. Book Now / Order Online specifically
+  result.hasBookOrOrder = BOOK_OR_ORDER_KEYWORDS.some((kw) => textLower.includes(kw));
+
+  // 7. WhatsApp link or icon
+  const whatsappSignals = [
+    "wa.me/", "api.whatsapp.com", "web.whatsapp.com", "whatsapp.com/send",
+  ];
+  result.hasWhatsapp = whatsappSignals.some((s) => htmlLower.includes(s));
+
+  // 8. Lead-capture form
+  result.hasForm =
+    $("form").length > 0 ||
+    htmlLower.includes("typeform.com") ||
+    htmlLower.includes("calendly.com");
+
+  // 9. Visible pricing or services list
+  const hasPriceWords = PRICING_KEYWORDS.some((kw) => textLower.includes(kw));
+  const hasServicesSection = /\b(services|menu|treatments|packages)\b/.test(textLower);
+  result.hasPricingOrServices = hasPriceWords || hasServicesSection;
+
+  // Site builder detection (informational)
+  for (const [sig, name] of Object.entries(SITE_BUILDERS)) {
+    if (htmlLower.includes(sig)) {
+      result.detectedBuilder = name;
+      break;
+    }
+  }
+
+  const checks: [string, boolean][] = [
+    ["not_responsive", result.hasResponsiveViewport],
+    ["no_html5_doctype", result.html5Doctype],
+    ["table_layout_or_no_semantics", result.usesModernLayout],
+    ["no_modern_css_framework", result.modernCssFramework],
+    ["no_clear_cta", result.hasClearCta],
+    ["no_book_or_order", result.hasBookOrOrder],
+    ["no_whatsapp", result.hasWhatsapp],
+    ["no_form", result.hasForm],
+    ["no_pricing_or_services", result.hasPricingOrServices],
+  ];
+  result.qualityScore = checks.filter(([, ok]) => ok).length;
+  result.qualityReasons = checks
+    .filter(([, ok]) => !ok)
+    .map(([r]) => r)
+    .join(", ");
+
+  return result;
+}
