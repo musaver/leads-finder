@@ -88,6 +88,11 @@ export async function POST(request: NextRequest) {
         controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
       };
 
+      // Past this point, skip contact-page crawling so the scan itself can
+      // still finish (and stream a clean "done") before the platform's
+      // maxDuration kills the function mid-stream.
+      const crawlDeadline = Date.now() + (maxDuration - 30) * 1000;
+
       try {
         send({ type: "status", message: `Searching Places for "${query}" in "${location}"...` });
         const places = await searchPlaces(apiKey, query, location, maxResults);
@@ -115,7 +120,9 @@ export async function POST(request: NextRequest) {
           }
 
           try {
-            const analysis = await analyzeWebsite(lead.website);
+            const analysis = await analyzeWebsite(lead.website, {
+              crawlContactPages: Date.now() < crawlDeadline,
+            });
             Object.assign(lead, analysis);
           } catch {
             lead.siteStatus = "fetch_failed";

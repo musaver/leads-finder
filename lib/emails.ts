@@ -140,9 +140,11 @@ export function findContactPageUrls(baseUrl: string, $: cheerio.CheerioAPI): str
     const rank = CONTACT_HINTS.findIndex((hint) => haystack.includes(hint));
     if (rank === -1) return;
 
-    // Dedupe ignoring hash and www. so /contact#form and www variants collapse.
-    const key = baseHost + resolved.pathname + resolved.search;
-    const baseKey = baseHost + base.pathname + base.search;
+    // Dedupe ignoring hash, www., and trailing slash so /contact#form,
+    // www variants, and /contact/ all collapse into one candidate.
+    const normPath = (p: string) => p.replace(/\/+$/, "") || "/";
+    const key = baseHost + normPath(resolved.pathname) + resolved.search;
+    const baseKey = baseHost + normPath(base.pathname) + base.search;
     if (seen.has(key) || key === baseKey) return;
     seen.add(key);
     resolved.hash = "";
