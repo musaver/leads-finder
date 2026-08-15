@@ -5,6 +5,11 @@ import * as cheerio from "cheerio";
 
 const MAX_EMAILS = 3;
 
+// Bound the plain-text regex scan: EMAIL_RE can backtrack quadratically on
+// pathological input, and pages are attacker-controlled. mailto/cfemail
+// extraction is DOM-based and unaffected by this cap.
+const MAX_SCAN_CHARS = 1_000_000;
+
 // The TLD must be all-lowercase or all-uppercase so a run-on like
 // "support@foo.comCall us" splits at the case change ("foo.com" + "Call")
 // instead of swallowing the next word into the domain. The uppercase
@@ -95,7 +100,7 @@ export function extractEmailsFromHtml(html: string, $: cheerio.CheerioAPI): stri
     if (decoded) found.add(decoded.trim().toLowerCase());
   }
 
-  for (const m of html.matchAll(EMAIL_RE)) {
+  for (const m of html.slice(0, MAX_SCAN_CHARS).matchAll(EMAIL_RE)) {
     found.add(m[0].toLowerCase());
   }
 

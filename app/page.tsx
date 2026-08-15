@@ -10,6 +10,7 @@ export default function Home() {
   const [location, setLocation] = useState("Chicago, IL");
   const [maxResults, setMaxResults] = useState(60);
   const [maxScore, setMaxScore] = useState(4);
+  const [requireEmail, setRequireEmail] = useState(false);
   const [apiKey, setApiKey] = useState("");
 
   const [scanning, setScanning] = useState(false);
@@ -38,6 +39,7 @@ export default function Home() {
           location,
           maxResults,
           maxScore,
+          requireEmail,
           apiKey: apiKey || undefined,
         }),
       });
@@ -172,6 +174,18 @@ export default function Home() {
                 disabled={scanning}
               />
             </Field>
+            <label className="flex items-center gap-2 text-sm text-zinc-700 md:col-span-2">
+              <input
+                type="checkbox"
+                checked={requireEmail}
+                onChange={(e) => setRequireEmail(e.target.checked)}
+                disabled={scanning}
+              />
+              Only fetch leads with an email
+              <span className="text-xs text-zinc-500">
+                (skips businesses where no email could be found, incl. those without a website)
+              </span>
+            </label>
           </div>
 
           <div className="mt-6 flex items-center gap-3">

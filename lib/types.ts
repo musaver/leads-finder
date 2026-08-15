@@ -37,6 +37,7 @@ export interface ScanRequest {
   location: string;
   maxResults: number;
   maxScore: number;
+  requireEmail?: boolean;   // only count businesses with a scraped email as leads
   apiKey?: string;
 }
 
