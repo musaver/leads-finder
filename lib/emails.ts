@@ -18,6 +18,12 @@ const EMAIL_RE =
   /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.(?:[a-z]{2,}|[A-Z]{2,}(?![A-Za-z]))/g;
 const EMAIL_EXACT_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
 
+// Anti-spam spellings like "info [at] clinic [dot] com". Only bracketed
+// markers are rewritten — bare "at"/"dot" words would fabricate addresses
+// out of ordinary prose ("find us at chicago.com").
+const OBFUSCATED_RE =
+  /([a-z0-9._%+-]+)\s*[\[({]\s*at\s*[\])}]\s*([a-z0-9-]+(?:\.[a-z0-9-]+)*)\s*[\[({]\s*dot\s*[\])}]\s*([a-z]{2,})/gi;
+
 // The regex happily matches asset filenames like "logo@2x.png".
 const JUNK_ENDINGS = [
   ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".heic", ".heif",
@@ -59,6 +65,31 @@ function isPlausibleEmail(email: string): boolean {
   if (JUNK_DOMAINS.some((d) => domain === d || domain.endsWith("." + d))) return false;
   if (JUNK_LOCALPART_RE.test(local)) return false;
   return true;
+}
+
+// Entity-decoded page text with a space between text nodes. Cheerio's
+// .text() concatenates adjacent nodes with no separator, which would glue
+// neighboring text onto an address (<b>Email</b><p>info@x.com</p> →
+// "Emailinfo@x.com") and fabricate a wrong local part.
+interface DomNode {
+  type: string;
+  data?: string;
+  name?: string;
+  children?: DomNode[];
+}
+
+function decodedText($: cheerio.CheerioAPI): string {
+  const parts: string[] = [];
+  const walk = (node: DomNode) => {
+    if (node.type === "text" && node.data) {
+      parts.push(node.data);
+      return;
+    }
+    if (node.name === "script" || node.name === "style") return;
+    for (const child of node.children ?? []) walk(child);
+  };
+  for (const root of $.root().toArray() as unknown as DomNode[]) walk(root);
+  return parts.join(" ");
 }
 
 // Cloudflare email obfuscation: first hex byte is an XOR key for the rest.
@@ -104,7 +135,31 @@ export function extractEmailsFromHtml(html: string, $: cheerio.CheerioAPI): stri
     found.add(m[0].toLowerCase());
   }
 
+  // The raw-HTML pass misses entity-encoded addresses (info&#64;site.com);
+  // the parsed DOM has them decoded. Also catch bracketed at/dot spellings.
+  const text = decodedText($).slice(0, MAX_SCAN_CHARS);
+  for (const m of text.matchAll(EMAIL_RE)) {
+    found.add(m[0].toLowerCase());
+  }
+  for (const m of text.matchAll(OBFUSCATED_RE)) {
+    found.add(`${m[1]}@${m[2]}.${m[3]}`.toLowerCase());
+  }
+
   return [...found].filter(isPlausibleEmail).slice(0, MAX_EMAILS);
+}
+
+/**
+ * Conventional contact-page paths to try blind. JS-rendered sites often ship
+ * a near-empty HTML shell with no nav links for findContactPageUrls to find,
+ * but still serve /contact and /contact-us as real routes.
+ */
+export function guessContactUrls(baseUrl: string): string[] {
+  try {
+    const origin = new URL(baseUrl).origin;
+    return [`${origin}/contact`, `${origin}/contact-us`];
+  } catch {
+    return [];
+  }
 }
 
 /**
