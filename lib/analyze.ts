@@ -101,16 +101,24 @@ async function fetchHtml(
 }
 
 // Homepage first; if it exposes no email, try the most contact-looking pages.
+// The crawl runs inside a sequential per-lead scan loop, so its latency
+// multiplies across leads: fetch both candidates in parallel with a short
+// timeout, and let the caller skip the crawl entirely when time is short.
 async function discoverEmails(
   pageUrl: string,
   html: string,
   $: cheerio.CheerioAPI,
+  crawlContactPages: boolean,
 ): Promise<string[]> {
   const fromHomepage = extractEmailsFromHtml(html, $);
-  if (fromHomepage.length > 0) return fromHomepage;
+  if (fromHomepage.length > 0 || !crawlContactPages) return fromHomepage;
 
-  for (const contactUrl of findContactPageUrls(pageUrl, $).slice(0, 2)) {
-    const page = await fetchHtml(contactUrl, 8000);
+  const pages = await Promise.all(
+    findContactPageUrls(pageUrl, $)
+      .slice(0, 2)
+      .map((contactUrl) => fetchHtml(contactUrl, 4000)),
+  );
+  for (const page of pages) {
     if (!page) continue;
     const emails = extractEmailsFromHtml(page.html, cheerio.load(page.html));
     if (emails.length > 0) return emails;
@@ -118,7 +126,10 @@ async function discoverEmails(
   return [];
 }
 
-export async function analyzeWebsite(url: string): Promise<SiteAnalysis> {
+export async function analyzeWebsite(
+  url: string,
+  opts: { crawlContactPages?: boolean } = {},
+): Promise<SiteAnalysis> {
   const result = emptyAnalysis();
   const fetched = await fetchHtml(url);
   if (!fetched) {
@@ -197,7 +208,12 @@ export async function analyzeWebsite(url: string): Promise<SiteAnalysis> {
     .join(", ");
 
   // Contact emails (informational, not part of the score)
-  result.emails = await discoverEmails(finalUrl, html, $);
+  result.emails = await discoverEmails(
+    finalUrl,
+    html,
+    $,
+    opts.crawlContactPages !== false,
+  );
 
   return result;
 }

@@ -73,7 +73,7 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const { query, location, maxResults = 60, maxScore = 4 } = body;
+  const { query, location, maxResults = 60, maxScore = 4, requireEmail = false } = body;
   if (!query || !location) {
     return new Response(JSON.stringify({ error: "query and location required" }), {
       status: 400,
@@ -87,6 +87,11 @@ export async function POST(request: NextRequest) {
       const send = (event: ScanEvent) => {
         controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
       };
+
+      // Past this point, skip contact-page crawling so the scan itself can
+      // still finish (and stream a clean "done") before the platform's
+      // maxDuration kills the function mid-stream.
+      const crawlDeadline = Date.now() + (maxDuration - 30) * 1000;
 
       try {
         send({ type: "status", message: `Searching Places for "${query}" in "${location}"...` });
@@ -102,25 +107,30 @@ export async function POST(request: NextRequest) {
           const lead = buildLead(p);
 
           if (!lead.website) {
-            // No website at all — automatic lead.
-            send({ type: "lead", index: i + 1, total: places.length, lead, isLead: true });
+            // No website at all — automatic lead, unless an email is required
+            // (there is no site to scrape one from).
+            send({ type: "lead", index: i + 1, total: places.length, lead, isLead: !requireEmail });
             continue;
           }
 
           if (!isValidUrl(lead.website)) {
             lead.siteStatus = "invalid_url";
-            send({ type: "lead", index: i + 1, total: places.length, lead, isLead: true });
+            send({ type: "lead", index: i + 1, total: places.length, lead, isLead: !requireEmail });
             continue;
           }
 
           try {
-            const analysis = await analyzeWebsite(lead.website);
+            const analysis = await analyzeWebsite(lead.website, {
+              crawlContactPages: Date.now() < crawlDeadline,
+            });
             Object.assign(lead, analysis);
           } catch {
             lead.siteStatus = "fetch_failed";
           }
 
-          const isLead = lead.qualityScore <= maxScore;
+          const isLead =
+            lead.qualityScore <= maxScore &&
+            (!requireEmail || lead.emails.length > 0);
           send({ type: "lead", index: i + 1, total: places.length, lead, isLead });
           await sleep(250);
         }

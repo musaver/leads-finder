@@ -5,13 +5,26 @@ import * as cheerio from "cheerio";
 
 const MAX_EMAILS = 3;
 
-const EMAIL_RE = /[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/gi;
+// Bound the plain-text regex scan: EMAIL_RE can backtrack quadratically on
+// pathological input, and pages are attacker-controlled. mailto/cfemail
+// extraction is DOM-based and unaffected by this cap.
+const MAX_SCAN_CHARS = 1_000_000;
+
+// The TLD must be all-lowercase or all-uppercase so a run-on like
+// "support@foo.comCall us" splits at the case change ("foo.com" + "Call")
+// instead of swallowing the next word into the domain. The uppercase
+// branch needs the lookahead to get the same boundary protection.
+const EMAIL_RE =
+  /[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.(?:[a-z]{2,}|[A-Z]{2,}(?![A-Za-z]))/g;
 const EMAIL_EXACT_RE = /^[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}$/;
 
 // The regex happily matches asset filenames like "logo@2x.png".
 const JUNK_ENDINGS = [
-  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".svg", ".ico",
-  ".css", ".js", ".json", ".pdf", ".mp4", ".webm",
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".heic", ".heif",
+  ".svg", ".ico", ".bmp", ".tif", ".tiff",
+  ".css", ".js", ".mjs", ".cjs", ".map", ".json", ".xml", ".html", ".htm",
+  ".pdf", ".txt", ".zip", ".gz",
+  ".mp3", ".mp4", ".m4a", ".m4v", ".wav", ".webm", ".mov", ".avi", ".mkv",
   ".woff", ".woff2", ".ttf", ".otf", ".eot",
 ];
 
@@ -41,6 +54,8 @@ function isPlausibleEmail(email: string): boolean {
   if (email.includes("%")) return false;
   if (JUNK_ENDINGS.some((ext) => email.endsWith(ext))) return false;
   const [local, domain] = email.split("@");
+  // Retina asset names: logo@2x.png, hero@1.5x.avif, ...
+  if (/^\d+(?:\.\d+)?x\./.test(domain)) return false;
   if (JUNK_DOMAINS.some((d) => domain === d || domain.endsWith("." + d))) return false;
   if (JUNK_LOCALPART_RE.test(local)) return false;
   return true;
@@ -85,7 +100,7 @@ export function extractEmailsFromHtml(html: string, $: cheerio.CheerioAPI): stri
     if (decoded) found.add(decoded.trim().toLowerCase());
   }
 
-  for (const m of html.matchAll(EMAIL_RE)) {
+  for (const m of html.slice(0, MAX_SCAN_CHARS).matchAll(EMAIL_RE)) {
     found.add(m[0].toLowerCase());
   }
 
@@ -125,9 +140,11 @@ export function findContactPageUrls(baseUrl: string, $: cheerio.CheerioAPI): str
     const rank = CONTACT_HINTS.findIndex((hint) => haystack.includes(hint));
     if (rank === -1) return;
 
-    // Dedupe ignoring hash and www. so /contact#form and www variants collapse.
-    const key = baseHost + resolved.pathname + resolved.search;
-    const baseKey = baseHost + base.pathname + base.search;
+    // Dedupe ignoring hash, www., and trailing slash so /contact#form,
+    // www variants, and /contact/ all collapse into one candidate.
+    const normPath = (p: string) => p.replace(/\/+$/, "") || "/";
+    const key = baseHost + normPath(resolved.pathname) + resolved.search;
+    const baseKey = baseHost + normPath(base.pathname) + base.search;
     if (seen.has(key) || key === baseKey) return;
     seen.add(key);
     resolved.hash = "";
