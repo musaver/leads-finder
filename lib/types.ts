@@ -18,6 +18,7 @@ export interface Lead {
   qualityScore: number;        // 0..9 — higher is better
   qualityReasons: string;      // comma-separated failed checks
   detectedBuilder: string;
+  emails: string[];            // contact emails scraped from the website
 
   // Individual signals
   hasResponsiveViewport: boolean;

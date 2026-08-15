@@ -30,6 +30,7 @@ function buildLead(p: PlaceResult): Lead {
     qualityScore: 0,
     qualityReasons: "",
     detectedBuilder: "",
+    emails: [],
     hasResponsiveViewport: false,
     html5Doctype: false,
     usesModernLayout: false,
