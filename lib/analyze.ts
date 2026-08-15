@@ -2,7 +2,11 @@
 // Scores a URL 0..9 against the low-quality criteria. Higher = better.
 
 import * as cheerio from "cheerio";
-import { extractEmailsFromHtml, findContactPageUrls } from "./emails";
+import {
+  extractEmailsFromHtml,
+  findContactPageUrls,
+  guessContactUrls,
+} from "./emails";
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
@@ -85,7 +89,19 @@ async function fetchHtml(
   const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const resp = await fetch(url, {
-      headers: { "User-Agent": USER_AGENT, "Accept": "text/html" },
+      // Look like a real browser navigation — bare UA + "Accept: text/html"
+      // trips naive bot filters that a fuller header set passes.
+      headers: {
+        "User-Agent": USER_AGENT,
+        "Accept":
+          "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "none",
+        "Sec-Fetch-User": "?1",
+      },
       redirect: "follow",
       signal: controller.signal,
     });
@@ -113,10 +129,17 @@ async function discoverEmails(
   const fromHomepage = extractEmailsFromHtml(html, $);
   if (fromHomepage.length > 0 || !crawlContactPages) return fromHomepage;
 
+  // Links found on the page rank first; conventional paths (/contact,
+  // /contact-us) fill the remaining slots — JS-shell pages expose no links
+  // server-side, so without the guesses they would never be crawled.
+  const norm = (u: string) => u.replace(/\/+$/, "").replace("://www.", "://");
+  const candidates = findContactPageUrls(pageUrl, $);
+  for (const guess of guessContactUrls(pageUrl)) {
+    if (!candidates.some((c) => norm(c) === norm(guess))) candidates.push(guess);
+  }
+
   const pages = await Promise.all(
-    findContactPageUrls(pageUrl, $)
-      .slice(0, 2)
-      .map((contactUrl) => fetchHtml(contactUrl, 4000)),
+    candidates.slice(0, 2).map((contactUrl) => fetchHtml(contactUrl, 4000)),
   );
   for (const page of pages) {
     if (!page) continue;
