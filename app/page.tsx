@@ -93,7 +93,7 @@ export default function Home() {
     if (leads.length === 0) return;
     const keys = Object.keys(leads[0]) as (keyof Lead)[];
     const escape = (v: unknown) => {
-      const s = v == null ? "" : String(v);
+      const s = v == null ? "" : Array.isArray(v) ? v.join("; ") : String(v);
       return `"${s.replace(/"/g, '""')}"`;
     };
     const rows = [keys.join(",")];
@@ -238,6 +238,7 @@ export default function Home() {
                   <tr>
                     <Th>Name</Th>
                     <Th>Phone</Th>
+                    <Th>Email</Th>
                     <Th>Website</Th>
                     <Th>Score</Th>
                     <Th>Status</Th>
@@ -253,6 +254,23 @@ export default function Home() {
                         <div className="text-xs text-zinc-500">{lead.address}</div>
                       </Td>
                       <Td>{lead.phone || "—"}</Td>
+                      <Td>
+                        {lead.emails.length > 0 ? (
+                          <div className="flex flex-col gap-0.5">
+                            {lead.emails.map((email) => (
+                              <a
+                                key={email}
+                                href={`mailto:${email}`}
+                                className="text-blue-600 hover:underline break-all"
+                              >
+                                {email}
+                              </a>
+                            ))}
+                          </div>
+                        ) : (
+                          <span className="text-zinc-400">—</span>
+                        )}
+                      </Td>
                       <Td>
                         {lead.website ? (
                           <a

@@ -2,6 +2,7 @@
 // Scores a URL 0..9 against the low-quality criteria. Higher = better.
 
 import * as cheerio from "cheerio";
+import { extractEmailsFromHtml, findContactPageUrls } from "./emails";
 
 const USER_AGENT =
   "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) " +
@@ -45,6 +46,7 @@ export interface SiteAnalysis {
   qualityScore: number;
   qualityReasons: string;
   detectedBuilder: string;
+  emails: string[];
   hasResponsiveViewport: boolean;
   html5Doctype: boolean;
   usesModernLayout: boolean;
@@ -62,6 +64,7 @@ function emptyAnalysis(): SiteAnalysis {
     qualityScore: 0,
     qualityReasons: "",
     detectedBuilder: "",
+    emails: [],
     hasResponsiveViewport: false,
     html5Doctype: false,
     usesModernLayout: false,
@@ -74,7 +77,10 @@ function emptyAnalysis(): SiteAnalysis {
   };
 }
 
-async function fetchHtml(url: string, timeoutMs = 12000): Promise<string | null> {
+async function fetchHtml(
+  url: string,
+  timeoutMs = 12000,
+): Promise<{ html: string; finalUrl: string } | null> {
   const controller = new AbortController();
   const t = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -86,7 +92,7 @@ async function fetchHtml(url: string, timeoutMs = 12000): Promise<string | null>
     if (!resp.ok) return null;
     const ctype = resp.headers.get("content-type") ?? "";
     if (!ctype.toLowerCase().includes("html")) return null;
-    return await resp.text();
+    return { html: await resp.text(), finalUrl: resp.url || url };
   } catch {
     return null;
   } finally {
@@ -94,13 +100,32 @@ async function fetchHtml(url: string, timeoutMs = 12000): Promise<string | null>
   }
 }
 
+// Homepage first; if it exposes no email, try the most contact-looking pages.
+async function discoverEmails(
+  pageUrl: string,
+  html: string,
+  $: cheerio.CheerioAPI,
+): Promise<string[]> {
+  const fromHomepage = extractEmailsFromHtml(html, $);
+  if (fromHomepage.length > 0) return fromHomepage;
+
+  for (const contactUrl of findContactPageUrls(pageUrl, $).slice(0, 2)) {
+    const page = await fetchHtml(contactUrl, 8000);
+    if (!page) continue;
+    const emails = extractEmailsFromHtml(page.html, cheerio.load(page.html));
+    if (emails.length > 0) return emails;
+  }
+  return [];
+}
+
 export async function analyzeWebsite(url: string): Promise<SiteAnalysis> {
   const result = emptyAnalysis();
-  const html = await fetchHtml(url);
-  if (!html) {
+  const fetched = await fetchHtml(url);
+  if (!fetched) {
     result.qualityReasons = "could_not_fetch_site";
     return result;
   }
+  const { html, finalUrl } = fetched;
 
   result.siteStatus = "ok";
   const $ = cheerio.load(html);
@@ -170,6 +195,9 @@ export async function analyzeWebsite(url: string): Promise<SiteAnalysis> {
     .filter(([, ok]) => !ok)
     .map(([r]) => r)
     .join(", ");
+
+  // Contact emails (informational, not part of the score)
+  result.emails = await discoverEmails(finalUrl, html, $);
 
   return result;
 }
